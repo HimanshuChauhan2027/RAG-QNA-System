@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+.venv311/
+
+# Streamlit
+.streamlit/
+!.streamlit/secrets.toml
+
+# FAISS Index
+faiss_index_storage/
+*.index
+*.pkl
+
+# Temporary files
+*.tmp
+*.temp
+temp_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+
