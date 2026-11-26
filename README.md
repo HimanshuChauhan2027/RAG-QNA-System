@@ -17,6 +17,7 @@ DocQuery is a Streamlit application that lets you upload PDF documents and ask n
 - Conversational question answering during a session
 - Retrieved source snippets with document names and page references
 - Downloadable chat history
+- A responsive Streamlit workspace with document status, suggested questions, and a dedicated chat interface
 
 ## Architecture
 
@@ -109,9 +110,9 @@ streamlit run app.py
 
 Then:
 
-1. Upload one or more PDF files.
+1. Add one or more PDFs in the dashboard upload area (or use **Upload PDF** in the sidebar to jump to it).
 2. Wait for extraction, chunking, embedding, and FAISS indexing to finish.
-3. Ask a question about the uploaded documents.
-4. Review the answer and expand the source section to inspect retrieved passages and pages.
+3. Choose a suggested prompt or ask a question in the chat.
+4. Review the answer and expand **View source passages** to inspect retrieved content and page references.
 
 The index is rebuilt from the current upload, and the chat history remains available for the current Streamlit session.

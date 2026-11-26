@@ -1,4 +1,4 @@
-"""DocQuery Streamlit entry point""".
+"""DocQuery Streamlit entry point"""
 
 
 
@@ -50,22 +50,37 @@ def process_uploads(uploaded_files, rebuild: bool) -> None:
     if already_processed and not rebuild:
         return
 
-    with tempfile.TemporaryDirectory(prefix="docquery_") as temporary_directory:
-        save_uploaded_files(uploaded_files, temporary_directory)
-        with st.spinner("Extracting text and creating chunks..."):
-            documents = load_and_split_documents(temporary_directory)
+    st.session_state["document_status"] = "processing"
+    st.session_state["document_status_files"] = file_names
+    try:
+        with tempfile.TemporaryDirectory(prefix="docquery_") as temporary_directory:
+            save_uploaded_files(uploaded_files, temporary_directory)
+            with st.spinner("Reading PDF pages and preparing searchable passages..."):
+                documents = load_and_split_documents(temporary_directory)
 
-        if not documents:
-            st.error("No text could be extracted from the uploaded PDF files.")
-            return
+            if not documents:
+                st.session_state["document_status"] = "error"
+                st.error("No text could be extracted from the selected PDF files.")
+                return
 
-        with st.spinner("Generating embeddings and building the FAISS index..."):
-            database = build_faiss_index(documents, INDEX_DIR, force_rebuild=True)
+            with st.spinner("Generating embeddings and building the FAISS index..."):
+                database = build_faiss_index(documents, INDEX_DIR, force_rebuild=True)
+    except Exception as error:
+        st.session_state["document_status"] = "error"
+        log_event(f"Document processing failed: {error}", "ERROR")
+        st.error(f"Document processing failed: {error}")
+        return
 
     st.session_state["retriever"] = database.as_retriever(search_kwargs={"k": TOP_K})
     st.session_state["processed_files"] = file_names
+    st.session_state["document_status"] = "ready"
     st.session_state["messages"] = []
-    st.success(f"Indexed {len(documents)} document chunks.")
+    st.success(f"Your documents are ready. Indexed {len(documents)} searchable passages.")
+
+
+def queue_question(question: str) -> None:
+    """Queue a suggested question for the chat input handler."""
+    st.session_state["pending_question"] = question
 
 
 def render_chat(prefer_groq: bool, groq_key, gemini_key) -> None:
@@ -76,28 +91,33 @@ def render_chat(prefer_groq: bool, groq_key, gemini_key) -> None:
     for role, message in st.session_state["messages"]:
         render_message(role, message)
 
-    def submit_query() -> None:
-        question = st.session_state.get("query_input", "").strip()
-        if question:
-            st.session_state["messages"].append(("user", question))
-            st.session_state["query_input"] = ""
+    if not st.session_state["messages"]:
+        st.markdown("<div class='section-kicker'>TRY ASKING</div>", unsafe_allow_html=True)
+        suggestions = [
+            "Summarize the key ideas",
+            "What are the main conclusions?",
+            "Find important dates and figures",
+        ]
+        columns = st.columns(len(suggestions))
+        for column, suggestion in zip(columns, suggestions):
+            with column:
+                st.button(
+                    suggestion,
+                    key=f"suggestion_{suggestion}",
+                    use_container_width=True,
+                    on_click=queue_question,
+                    args=(suggestion,),
+                )
 
-    st.text_area("Ask a question about your documents", key="query_input")
-    action_column, clear_column = st.columns(2)
-    with action_column:
-        st.button("Submit Question", on_click=submit_query, use_container_width=True)
-    with clear_column:
-        if st.button("Clear Conversation", use_container_width=True):
-            st.session_state["messages"] = []
-            st.rerun()
-
-    messages = st.session_state["messages"]
-    if not messages or messages[-1][0] != "user":
+    submitted_question = st.chat_input("Ask a question about your documents…")
+    pending_question = st.session_state.pop("pending_question", "")
+    question = (submitted_question or pending_question).strip()
+    if not question:
         return
 
-    question = messages[-1][1]
+    st.session_state["messages"].append(("user", question))
     try:
-        with st.spinner("Retrieving context and generating an answer..."):
+        with st.spinner("Searching your documents and preparing an answer..."):
             answer, source_documents, model_name = answer_question(
                 st.session_state["retriever"],
                 question,
@@ -124,14 +144,26 @@ def main() -> None:
     render_header()
 
     groq_available, gemini_available, groq_key, gemini_key = provider_status()
-    prefer_groq, rebuild = render_sidebar(groq_available, gemini_available)
-
-    st.header("Upload PDFs")
+    st.markdown("<div id='upload-pdf'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-kicker'>STEP 1 · ADD YOUR KNOWLEDGE BASE</div>", unsafe_allow_html=True)
+    st.markdown("<h2 class='upload-title'>Upload your documents</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='hint-text'>Drop one or more PDF files here. DocQuery will extract, index, and prepare them for questions.</p>",
+        unsafe_allow_html=True,
+    )
     uploaded_files = st.file_uploader(
-        "Upload one or more PDF files",
+        "Drop PDF files here or browse",
         accept_multiple_files=True,
         type=["pdf"],
-        help="Upload PDF documents to create your searchable knowledge base.",
+        help="Upload one or more PDF documents to create your searchable knowledge base.",
+        key="document_uploader",
+    )
+    prefer_groq, rebuild = render_sidebar(
+        groq_available,
+        gemini_available,
+        groq_key,
+        gemini_key,
+        uploaded_files,
     )
 
     if not uploaded_files:
@@ -139,18 +171,23 @@ def main() -> None:
         return
 
     process_uploads(uploaded_files, rebuild)
-    if "retriever" not in st.session_state:
+    if (
+        "retriever" not in st.session_state
+        or st.session_state.get("processed_files") != [file.name for file in uploaded_files]
+    ):
         return
 
-    chat_tab, info_tab = st.tabs(["Chat", "About"])
-    with chat_tab:
-        st.markdown("### Chat with your documents")
-        render_chat(prefer_groq, groq_key, gemini_key)
-    with info_tab:
-        render_info()
+    st.markdown("---")
+    st.markdown("<div class='section-kicker'>STEP 2 · EXPLORE YOUR DOCUMENTS</div>", unsafe_allow_html=True)
+    st.markdown("<h2>Ask DocQuery</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='hint-text'>Answers are generated from retrieved passages in your uploaded PDFs. Expand source passages to verify the context.</p>",
+        unsafe_allow_html=True,
+    )
+    render_chat(prefer_groq, groq_key, gemini_key)
 
     st.markdown("---")
-    st.caption("DocQuery | AI-Powered Document Q&A Chatbot")
+    render_info()
 
 
 if __name__ == "__main__":
